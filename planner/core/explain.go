@@ -241,6 +241,11 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 
 	buffer.WriteString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+	if p.IsHashFromOuter {
+		fmt.Fprint(buffer, ", hasher:outer")
+	} else {
+		fmt.Fprint(buffer, ", hasher:inner")
+	}
 	if len(p.EqualConditions) > 0 {
 		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
 	}

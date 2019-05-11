@@ -327,8 +327,8 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+	tk.MustQuery("explain SELECT /*+ HASH_JOIN_HASHER(t2) */ * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, hasher:inner, equal:[eq(test.t1.id, test.t2.id)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
 		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -369,8 +369,8 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+	tk.MustQuery("explain SELECT /*+ HASH_JOIN_HASHER(t2) */ * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, hasher:inner, equal:[eq(test.t1.id, test.t2.id)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
 		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -389,8 +389,8 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+	tk.MustQuery("explain SELECT /*+ HASH_JOIN_HASHER(t2) */ * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, hasher:inner, equal:[eq(test.t1.id, test.t2.id)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
 		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",

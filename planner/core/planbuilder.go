@@ -60,6 +60,7 @@ type tableHintInfo struct {
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
 	indexHintList             []indexHintInfo
+	hashJoinHasherTables      map[string]struct{}
 	preferAggType             uint
 }
 

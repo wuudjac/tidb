@@ -60,6 +60,8 @@ const (
 	TiDBHashJoin = "tidb_hj"
 	// HintHJ is hint enforce hash join.
 	HintHJ = "hash_join"
+	// HintHJHasher is hint enforce building hash table from specific table.
+	HintHJHasher = "hash_join_hasher"
 	// HintHashAgg is hint enforce hash aggregation.
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
@@ -440,8 +442,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	}
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
+	joinPlan.hintInfo = b.TableHints()
 	// Set preferred join algorithm if some join hints is specified by user.
-	joinPlan.setPreferredJoinType(b.TableHints())
+	joinPlan.setPreferredJoinType(joinPlan.hintInfo)
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
 	//
@@ -1958,6 +1961,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
+		hashJoinHasherTables                        map[string]struct{}
 		preferAggType                               uint
 	)
 	for _, hint := range hints {
@@ -1968,6 +1972,13 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables)...)
+		case HintHJHasher:
+			if len(hint.Tables) > 0 {
+				hashJoinHasherTables = make(map[string]struct{}, len(hint.Tables))
+				for _, table := range hint.Tables {
+					hashJoinHasherTables[table.TableName.L] = struct{}{}
+				}
+			}
 		case HintHashAgg:
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -1987,12 +1998,15 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 ||
+		preferAggType != 0 ||
+		len(hashJoinHasherTables) > 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
+			hashJoinHasherTables:      hashJoinHasherTables,
 			preferAggType:             preferAggType,
 		})
 		return true

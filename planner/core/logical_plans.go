@@ -275,7 +275,7 @@ func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCo
 type LogicalSelection struct {
 	baseLogicalPlan
 
-	// Originally the WHERE or ON condition is parsed into a single expression,
+	// Conditions originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
@@ -355,7 +355,7 @@ type DataSource struct {
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
 
-	// The data source may be a partition, rather than a real table.
+	// isPartition indicates whether the data source is a partition or a real table.
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
@@ -611,7 +611,7 @@ func (path *accessPath) splitCorColAccessCondFromFilters(eqOrInCount int) (acces
 	return access, remained
 }
 
-// getEqOrInColOffset checks if the expression is a eq function that one side is constant or correlated column
+// isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
 // and another is column.
 func isColEqCorColOrConstant(filter expression.Expression, col *expression.Column) bool {
 	f, ok := filter.(*expression.ScalarFunction)

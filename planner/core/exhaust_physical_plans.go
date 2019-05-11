@@ -94,7 +94,7 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 	return otherConds
 }
 
-// Only if the input required prop is the prefix fo join keys, we can pass through this property.
+// tryToGetChildReqProp Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
 	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, false, math.MaxFloat64, false)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, false, math.MaxFloat64, false)
@@ -170,7 +170,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 	return joins
 }
 
-// Change JoinKeys order, by offsets array
+// getNewJoinKeysByOffsets Change JoinKeys order, by offsets array
 // offsets array is generate by prop check
 func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []*expression.Column {
 	newKeys := make([]*expression.Column, 0, len(oldJoinKeys))
@@ -261,19 +261,56 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 		return nil
 	}
 	joins := make([]PhysicalPlan, 0, 2)
+	// Only some of the join types support building hash table from outer,
+	// See comments of HashJoinExec.isHashFromOuter for more details.
 	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 1))
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		joins = append(joins, p.getHashJoin(prop, 1, 1))
+	case LeftOuterJoin:
+		joins = append(joins, p.getHashJoin(prop, 1, p.getHasherIdx(1)))
 	case RightOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 0))
+		joins = append(joins, p.getHashJoin(prop, 0, p.getHasherIdx(0)))
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(prop, 1))
-		joins = append(joins, p.getHashJoin(prop, 0))
+		joins = append(joins, p.getHashJoin(prop, 1, 1))
+		joins = append(joins, p.getHashJoin(prop, 0, 0))
 	}
 	return joins
 }
 
-func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int) *PhysicalHashJoin {
+// getHasherIdx decides which table to make hash table based on row count. (#6868)
+// For outer join, if outer table is chosen to make hash table, outer rows will
+// be iterated 2*RowCount times: 1 for building hash table and 1 for finding all
+// unjoined rows from bitmap.
+// So here we restrict this solution only be picked when outer table has far less
+// rows than inner table.
+func (p *LogicalJoin) getHasherIdx(fallbackIdx int) int {
+	children := p.Children()
+	// Try hint first.
+	if p.hintInfo != nil {
+		for i, child := range children {
+			alias := extractTableAlias(child)
+			if alias == nil {
+				continue
+			}
+			if _, ok := p.hintInfo.hashJoinHasherTables[alias.L]; ok {
+				return i
+			}
+		}
+	}
+	/* TODO WIP get a proper formula based on benchmark comparison.
+	rowCount0 := children[0].statsInfo().RowCount
+	rowCount1 := children[1].statsInfo().RowCount
+	// If both tables have very few rows, there's no need to do this optimization.
+	if rowCount0 > 20 && rowCount0 >= 10*rowCount1 {
+		return 1
+	} else if rowCount1 > 20 && rowCount1 >= 10*rowCount0 {
+		return 0
+	}
+	*/
+	return fallbackIdx
+}
+
+func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, hashIdx int) *PhysicalHashJoin {
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
@@ -295,13 +332,14 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		basePhysicalJoin: baseJoin,
 		EqualConditions:  p.EqualConditions,
 		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
+		IsHashFromOuter:  (hashIdx != innerIdx),
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
 }
 
-// When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
-// is generated during execution time.
+// constructIndexJoin When inner plan is TableReader, the parameter `ranges` will be nil.
+// Because pk only have one column. So all of its range is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
@@ -1123,7 +1161,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	return nil, false
 }
 
-// LogicalJoin can generates hash join, index join and sort merge join.
+// exhaustPhysicalPlans LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
@@ -1213,7 +1251,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	return ret
 }
 
-// Check if this prop's columns can match by items totally.
+// matchItems Check if this prop's columns can match by items totally.
 func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
 	if len(items) < len(p.Items) {
 		return false
@@ -1238,7 +1276,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	if !prop.AllColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
-	join := la.getHashJoin(prop, 1)
+	join := la.getHashJoin(prop, 1, 1)
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.corCols,

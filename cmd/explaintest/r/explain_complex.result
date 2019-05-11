@@ -245,7 +245,7 @@ id	count	task	operator info
 Sort_10	1.00	root	test.d.left_value:asc
 └─HashAgg_15	1.00	root	group by:test.d.id, funcs:firstrow(test.d.id), firstrow(test.d.ctx), firstrow(test.d.name), firstrow(test.d.left_value), firstrow(test.d.right_value), firstrow(test.d.depth), firstrow(test.d.leader_id), firstrow(test.d.status), firstrow(test.d.created_on), firstrow(test.d.updated_on)
   └─Selection_22	0.01	root	or(eq(test.ep.user_id, 62), or(eq(test.d.id, 20), eq(test.d.id, 20)))
-    └─HashLeftJoin_23	0.02	root	left outer join, inner:TableReader_68, equal:[eq(test.p.id, test.ep.position_id)]
+    └─HashLeftJoin_23	0.02	root	left outer join, inner:TableReader_68, hasher:inner, equal:[eq(test.p.id, test.ep.position_id)]
       ├─IndexMergeJoin_39	0.01	root	left outer join, inner:IndexLookUp_37, outer key:test.d.id, inner key:test.p.department_id
       │ ├─IndexLookUp_58	0.01	root	
       │ │ ├─IndexScan_55	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo

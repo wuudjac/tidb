@@ -178,8 +178,8 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	return m
 }
 
+// aggTestCase The test table's schema is fixed (aggCol Double, groupBy LongLong).
 type aggTestCase struct {
-	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
 	execType    string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....
 	groupByNDV  int    // the number of distinct group-by keys
@@ -401,8 +401,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, src Executor
 	return exec
 }
 
+// windowTestCase The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(5128), col LongLong).
 type windowTestCase struct {
-	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(5128), col LongLong).
 	windowFunc string
 	ndv        int // the number of distinct group-by keys
 	rows       int
@@ -517,69 +517,23 @@ func BenchmarkWindowFunctions(b *testing.B) {
 	}
 }
 
-type hashJoinTestCase struct {
-	rows        int
-	concurrency int
-	ctx         sessionctx.Context
-	keyIdx      []int
+type hashJoinTestCaseTable struct {
+	rows   int
+	keyIdx []int
 }
 
-func (tc hashJoinTestCase) columns() []*expression.Column {
+func (tct hashJoinTestCaseTable) columns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeVarString)},
 	}
 }
 
-func (tc hashJoinTestCase) String() string {
-	return fmt.Sprintf("(rows:%v, concurency:%v, joinKeyIdx: %v)",
-		tc.rows, tc.concurrency, tc.keyIdx)
-}
-
-func defaultHashJoinTestCase() *hashJoinTestCase {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}}
-	return tc
-}
-
-func prepare4Join(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
-	cols0 := testCase.columns()
-	cols1 := testCase.columns()
-	joinSchema := expression.NewSchema(cols0...)
-	joinSchema.Append(cols1...)
-	joinKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
-	for _, keyIdx := range testCase.keyIdx {
-		joinKeys = append(joinKeys, cols0[keyIdx])
-	}
-	e := &HashJoinExec{
-		baseExecutor:  newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
-		concurrency:   uint(testCase.concurrency),
-		joinType:      0, // InnerJoin
-		isOuterJoin:   false,
-		innerKeys:     joinKeys,
-		outerKeys:     joinKeys,
-		innerExec:     innerExec,
-		outerExec:     outerExec,
-		innerEstCount: float64(testCase.rows),
-	}
-	defaultValues := make([]types.Datum, e.innerExec.Schema().Len())
-	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
-	e.joiners = make([]joiner, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes)
-	}
-	return e
-}
-
-func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
+func (tct hashJoinTestCaseTable) buildMockDataSource(ctx sessionctx.Context) *mockDataSource {
 	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(casTest.columns()...),
-		rows:   casTest.rows,
-		ctx:    casTest.ctx,
+		schema: expression.NewSchema(tct.columns()...),
+		rows:   tct.rows,
+		ctx:    ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
@@ -591,17 +545,84 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			}
 		},
 	}
-	dataSource1 := buildMockDataSource(opt)
-	dataSource2 := buildMockDataSource(opt)
+	return buildMockDataSource(opt)
+}
 
+type hashJoinTestCase struct {
+	concurrency int
+	ctx         sessionctx.Context
+	innerTable  hashJoinTestCaseTable
+	outerTable  hashJoinTestCaseTable
+}
+
+func (tc hashJoinTestCase) String() string {
+	return fmt.Sprintf("(concurency:%v, inner:(rows:%v, joinKeyIdx:%v), outer:(rows:%v, joinKeyIdx:%v))",
+		tc.concurrency, tc.innerTable.rows, tc.innerTable.keyIdx, tc.outerTable.rows, tc.outerTable.keyIdx)
+}
+
+func (tc hashJoinTestCase) BuildExecutorWithDataSource(joinType core.JoinType) (executor *HashJoinExec, innerDatasource *mockDataSource, outerDatasource *mockDataSource) {
+	innerDatasource = tc.innerTable.buildMockDataSource(tc.ctx)
+	outerDatasource = tc.outerTable.buildMockDataSource(tc.ctx)
+	colsInner := tc.innerTable.columns()
+	colsOuter := tc.outerTable.columns()
+	joinSchema := expression.NewSchema(colsInner...)
+	joinSchema.Append(colsOuter...)
+	innerKeys := make([]*expression.Column, 0, len(tc.innerTable.keyIdx))
+	for _, keyIdx := range tc.innerTable.keyIdx {
+		innerKeys = append(innerKeys, colsInner[keyIdx])
+	}
+	outerKeys := make([]*expression.Column, 0, len(tc.outerTable.keyIdx))
+	for _, keyIdx := range tc.outerTable.keyIdx {
+		outerKeys = append(outerKeys, colsOuter[keyIdx])
+	}
+	e := &HashJoinExec{
+		baseExecutor:  newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerDatasource, outerDatasource),
+		concurrency:   uint(tc.concurrency),
+		joinType:      joinType,
+		isOuterJoin:   joinType.IsOuterJoin(),
+		innerKeys:     innerKeys,
+		outerKeys:     outerKeys,
+		innerExec:     innerDatasource,
+		outerExec:     outerDatasource,
+		innerEstCount: float64(tc.innerTable.rows),
+	}
+	defaultValues := make([]types.Datum, e.innerExec.Schema().Len())
+	lhsTypes, rhsTypes := retTypes(innerDatasource), retTypes(outerDatasource)
+	e.joiners = make([]joiner, e.concurrency)
+	for i := uint(0); i < e.concurrency; i++ {
+		e.joiners[i] = newJoiner(tc.ctx, e.joinType, true, defaultValues,
+			nil, lhsTypes, rhsTypes)
+	}
+	return
+}
+
+func defaultHashJoinTestCase() *hashJoinTestCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	table := hashJoinTestCaseTable{
+		rows:   100000,
+		keyIdx: []int{0, 1},
+	}
+	tc := &hashJoinTestCase{
+		concurrency: 4,
+		ctx:         ctx,
+		innerTable:  table,
+		outerTable:  table,
+	}
+	return tc
+}
+
+func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		exec := prepare4Join(casTest, dataSource1, dataSource2)
+		exec, innerDatasource, outerDatasource := casTest.BuildExecutorWithDataSource(core.InnerJoin)
 		tmpCtx := context.Background()
 		chk := newFirstChunk(exec)
-		dataSource1.prepareChunks()
-		dataSource2.prepareChunks()
+		innerDatasource.prepareChunks()
+		outerDatasource.prepareChunks()
 
 		b.StartTimer()
 		if err := exec.Open(tmpCtx); err != nil {
@@ -630,33 +651,17 @@ func BenchmarkHashJoinExec(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
 
-	cas.keyIdx = []int{0}
+	cas.innerTable.keyIdx = []int{0}
+	cas.outerTable.keyIdx = []int{0}
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
 }
 
 func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(casTest.columns()...),
-		rows:   casTest.rows,
-		ctx:    casTest.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				return int64(row)
-			case mysql.TypeVarString:
-				return rawData
-			default:
-				panic("not implement")
-			}
-		},
-	}
-	dataSource1 := buildMockDataSource(opt)
-	dataSource2 := buildMockDataSource(opt)
+	exec, innerDatasource, _ := casTest.BuildExecutorWithDataSource(core.InnerJoin)
 
-	dataSource1.prepareChunks()
-	exec := prepare4Join(casTest, dataSource1, dataSource2)
+	innerDatasource.prepareChunks()
 	tmpCtx := context.Background()
 	if err := exec.Open(tmpCtx); err != nil {
 		b.Fatal(err)
@@ -666,8 +671,8 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		b.StopTimer()
 		exec.rowContainer = nil
 		exec.memTracker = memory.NewTracker(exec.id, exec.ctx.GetSessionVars().MemQuotaHashJoin)
-		innerResultCh := make(chan *chunk.Chunk, len(dataSource1.chunks))
-		for _, chk := range dataSource1.chunks {
+		innerResultCh := make(chan *chunk.Chunk, len(innerDatasource.chunks))
+		for _, chk := range innerDatasource.chunks {
 			innerResultCh <- chk
 		}
 		close(innerResultCh)
@@ -687,14 +692,48 @@ func BenchmarkBuildHashTableForList(b *testing.B) {
 		benchmarkBuildHashTableForList(b, cas)
 	})
 
-	cas.keyIdx = []int{0}
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkBuildHashTableForList(b, cas)
-	})
-
-	cas.keyIdx = []int{0}
-	cas.rows = 10
+	cas.innerTable.keyIdx, cas.outerTable.keyIdx = []int{0}, []int{0}
+	cas.innerTable.rows, cas.outerTable.rows = 10, 10
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkBuildHashTableForList(b, cas)
 	})
 }
+
+/*
+func BenchmarkHashJoinOuterHash(b *testing.B) {
+	b.ReportAllocs()
+	baseRowCountList := []int{
+		10,
+		100,
+		1000,
+		10000,
+		100000,
+	}
+	// inner row count / outer row count
+	innerOuterRatioList := []int{
+		1,
+		2,
+		5,
+		10,
+		100,
+		1000,
+	}
+
+	// TODO WIP use left outer join.
+	cas := defaultHashJoinTestCase()
+	isHashFromOuter := (strings.ToLower(os.Getenv("HASH_FROM")) == "outer")
+	for _, baseRowCount := range baseRowCountList {
+		for _, ratio := range innerOuterRatioList {
+			cas.outerTable.rows = baseRowCount
+			cas.innerTable.rows = baseRowCount * ratio
+		}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas, func(exec *HashJoinExec) {
+				if isHashFromOuter {
+					exec.isHashFromOuter = true
+				}
+			})
+		})
+	}
+}
+*/

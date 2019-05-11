@@ -17,6 +17,7 @@ import (
 	"hash"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -129,9 +130,11 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 }
 
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// If there's a filter available, it will be applied on chunk to determine whether one
+// row can be put into hash map.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
+func (c *hashRowContainer) PutChunk(ctx sessionctx.Context, chk *chunk.Chunk, filter expression.CNFExprs) error {
 	chkIdx := uint32(c.records.NumChunks())
 	c.records.Add(chk)
 	var (
@@ -139,8 +142,23 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 		err     error
 		key     uint64
 	)
+
+	var selected []bool
+	if len(filter) > 0 {
+		selected = make([]bool, chk.NumRows())
+		selected, err = expression.VectorizedFilter(ctx, filter,
+			chunk.NewIterator4Chunk(chk), selected)
+		if err != nil {
+			return err
+		}
+	}
+
 	numRows := chk.NumRows()
 	for j := 0; j < numRows; j++ {
+		if len(selected) > j && !selected[j] {
+			continue
+		}
+
 		hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, chk.GetRow(j), c.hCtx)
 		if err != nil {
 			return errors.Trace(err)

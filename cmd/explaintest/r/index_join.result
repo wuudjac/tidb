@@ -19,7 +19,7 @@ IndexJoin_22	5.00	root	inner join, inner:IndexLookUp_21, outer key:test.t2.a, in
 explain select * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
 Projection_6	5.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
-└─HashRightJoin_31	5.00	root	inner join, inner:TableReader_42, equal:[eq(test.t2.a, test.t1.a)]
+└─HashRightJoin_31	5.00	root	inner join, inner:TableReader_42, hasher:inner, equal:[eq(test.t2.a, test.t1.a)]
   ├─TableReader_42	1.00	root	data:Selection_41
   │ └─Selection_41	1.00	cop	not(isnull(test.t2.a))
   │   └─TableScan_40	1.00	cop	table:t2, range:[-inf,+inf], keep order:false

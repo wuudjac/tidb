@@ -109,8 +109,8 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)]",
+	testKit.MustQuery("explain select /*+ HASH_JOIN_HASHER(t2) */ * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
+		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, hasher:inner, equal:[eq(test.t1.a, test.t2.a)]",
 		"├─TableReader_12 5.99 root data:Selection_11",
 		"│ └─Selection_11 5.99 cop not(isnull(test.t1.a))",
 		"│   └─TableScan_10 6.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -136,10 +136,10 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	}
 
-	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4").Check(testkit.Rows(
-		"HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
-		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
+	testKit.MustQuery("explain select /*+ HASH_JOIN_HASHER(t2, t3, t4) */ straight_join * from t1, t2, t3, t4").Check(testkit.Rows(
+		"HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23, hasher:inner",
+		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21, hasher:inner",
+		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19, hasher:inner",
 		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
 		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
@@ -151,9 +151,9 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	))
 
 	testKit.MustQuery("explain select * from t1 straight_join t2 straight_join t3 straight_join t4").Check(testkit.Rows(
-		"HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
-		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
+		"HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23, hasher:inner",
+		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21, hasher:inner",
+		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19, hasher:inner",
 		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
 		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
@@ -165,9 +165,9 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	))
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a;").Check(testkit.Rows(
-		"HashLeftJoin_11 1248750000000.00 root inner join, inner:TableReader_26, equal:[eq(test.t1.a, test.t4.a)]",
-		"├─HashLeftJoin_13 999000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-		"│ ├─HashRightJoin_16 99900000.00 root CARTESIAN inner join, inner:TableReader_19",
+		"HashLeftJoin_11 1248750000000.00 root inner join, inner:TableReader_26, hasher:inner, equal:[eq(test.t1.a, test.t4.a)]",
+		"├─HashLeftJoin_13 999000000000.00 root CARTESIAN inner join, inner:TableReader_23, hasher:inner",
+		"│ ├─HashRightJoin_16 99900000.00 root CARTESIAN inner join, inner:TableReader_19, hasher:inner",
 		"│ │ ├─TableReader_19 9990.00 root data:Selection_18",
 		"│ │ │ └─Selection_18 9990.00 cop not(isnull(test.t1.a))",
 		"│ │ │   └─TableScan_17 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -685,14 +685,14 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustExec("create table t(a int, b int, c int, index idx(c,b,a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
+	tk.MustQuery("explain select /*+ HASH_JOIN_HASHER(t2) */ t.c in (select /*+ HASH_JOIN_HASHER(t1) */ count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",
-			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)",
+			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, hasher:inner, other cond:eq(test.t.c, 7_col_0)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
-			"    └─HashLeftJoin_21 1.00 root inner join, inner:TableReader_28, equal:[eq(test.s.a, test.t1.a)]",
+			"    └─HashLeftJoin_21 1.00 root inner join, inner:TableReader_28, hasher:inner, equal:[eq(test.s.a, test.t1.a)]",
 			"      ├─TableReader_25 1.00 root data:Selection_24",
 			"      │ └─Selection_24 1.00 cop eq(test.s.a, test.t.a), not(isnull(test.s.a))",
 			"      │   └─TableScan_23 10.00 cop table:s, range:[-inf,+inf], keep order:false",
@@ -700,10 +700,10 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"        └─Selection_27 1.00 cop eq(test.t1.a, test.t.a), not(isnull(test.t1.a))",
 			"          └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
 		))
-	tk.MustQuery("explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
+	tk.MustQuery("explain select /*+ HASH_JOIN_HASHER(t1) */ (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
 		Check(testkit.Rows(
 			"Projection_8 10.00 root concat(t1.a, \",\", t1.b)",
-			"└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_13",
+			"└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_13, hasher:inner",
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_13 1.00 root ",
@@ -911,9 +911,9 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	))
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
-	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
+	tk.MustQuery("explain select /*+ HASH_JOIN_HASHER(t2) */ * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
 		"Projection_7 0.00 root test.t1.a, test.t1.b, test.t2.a, test.t2.b",
-		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(test.t2.b, test.t1.b)]",
+		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, hasher:inner, equal:[eq(test.t2.b, test.t1.b)]",
 		"  ├─TableReader_12 0.00 root data:Selection_11",
 		"  │ └─Selection_11 0.00 cop isnull(test.t2.b), not(isnull(test.t2.b))",
 		"  │   └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",

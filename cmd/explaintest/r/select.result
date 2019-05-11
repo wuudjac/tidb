@@ -327,14 +327,14 @@ drop table if exists t;
 create table t (id int primary key, a int, b int);
 explain select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
 id	count	task	operator info
-HashLeftJoin_10	155937656.25	root	CARTESIAN left outer join, inner:HashLeftJoin_17, left cond:[eq(test.t2.b, 1)]
-├─HashLeftJoin_11	12487.50	root	left outer join, inner:TableReader_16, equal:[eq(test.t1.a, test.t2.a)]
+HashLeftJoin_10	155937656.25	root	CARTESIAN left outer join, inner:HashLeftJoin_17, hasher:inner, left cond:[eq(test.t2.b, 1)]
+├─HashLeftJoin_11	12487.50	root	left outer join, inner:TableReader_16, hasher:inner, equal:[eq(test.t1.a, test.t2.a)]
 │ ├─TableReader_13	10000.00	root	data:TableScan_12
 │ │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 │ └─TableReader_16	9990.00	root	data:Selection_15
 │   └─Selection_15	9990.00	cop	not(isnull(test.t2.a))
 │     └─TableScan_14	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-└─HashLeftJoin_17	12487.50	root	left outer join, inner:TableReader_22, equal:[eq(test.t3.a, test.t4.a)]
+└─HashLeftJoin_17	12487.50	root	left outer join, inner:TableReader_22, hasher:inner, equal:[eq(test.t3.a, test.t4.a)]
   ├─TableReader_19	10000.00	root	data:TableScan_18
   │ └─TableScan_18	10000.00	cop	table:t3, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_22	9990.00	root	data:Selection_21
@@ -383,7 +383,7 @@ create table t(a int, b int);
 explain select a != any (select a from t t2) from t t1;
 id	count	task	operator info
 Projection_8	10000.00	root	and(or(or(gt(col_count, 1), ne(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 0)), and(ne(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 1)))
-└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
+└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16, hasher:inner
   ├─TableReader_12	10000.00	root	data:TableScan_11
   │ └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_16	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
@@ -393,7 +393,7 @@ Projection_8	10000.00	root	and(or(or(gt(col_count, 1), ne(test.t1.a, col_firstro
 explain select a = all (select a from t t2) from t t1;
 id	count	task	operator info
 Projection_8	10000.00	root	or(and(and(le(col_count, 1), eq(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 1)), or(eq(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 0)))
-└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
+└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16, hasher:inner
   ├─TableReader_12	10000.00	root	data:TableScan_11
   │ └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_16	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
@@ -407,7 +407,7 @@ create table s(a varchar(20), b varchar(20));
 explain select a in (select a from s where s.b = t.b) from t;
 id	count	task	operator info
 Projection_9	10000.00	root	6_aux_0
-└─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(cast(test.t.b), cast(test.s.b))], other cond:eq(cast(test.t.a), cast(test.s.a))
+└─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, hasher:inner, equal:[eq(cast(test.t.b), cast(test.s.b))], other cond:eq(cast(test.t.a), cast(test.s.a))
   ├─Projection_11	10000.00	root	test.t.a, test.t.b, cast(test.t.b)
   │ └─TableReader_13	10000.00	root	data:TableScan_12
   │   └─TableScan_12	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
@@ -417,7 +417,7 @@ Projection_9	10000.00	root	6_aux_0
 explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 id	count	task	operator info
 Projection_7	10000.00	root	6_aux_0
-└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t1.b, test.t2.b)], other cond:eq(test.t1.a, plus(test.t2.a, test.t2.b))
+└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, hasher:inner, equal:[eq(test.t1.b, test.t2.b)], other cond:eq(test.t1.a, plus(test.t2.a, test.t2.b))
   ├─TableReader_10	10000.00	root	data:TableScan_9
   │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_12	10000.00	root	data:TableScan_11
@@ -427,7 +427,7 @@ create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
 id	count	task	operator info
 Projection_7	10000.00	root	6_aux_0
-└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]
+└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, hasher:inner, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]
   ├─TableReader_10	10000.00	root	data:TableScan_9
   │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_12	10000.00	root	data:TableScan_11
@@ -463,7 +463,7 @@ drop table if exists t2;
 create table t2(a int, b int);
 explain select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);
 id	count	task	operator info
-HashLeftJoin_10	7984.01	root	semi join, inner:TableReader_16, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
+HashLeftJoin_10	7984.01	root	semi join, inner:TableReader_16, hasher:inner, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
 ├─TableReader_13	9980.01	root	data:Selection_12
 │ └─Selection_12	9980.01	cop	not(isnull(test.t1.a)), not(isnull(test.t1.b))
 │   └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo

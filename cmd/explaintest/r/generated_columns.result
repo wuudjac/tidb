@@ -82,7 +82,7 @@ IndexJoin_23	5.00	root	inner join, inner:IndexLookUp_22, outer key:test.sgc2.a, 
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
 Projection_6	5.00	root	test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
-└─HashRightJoin_32	5.00	root	inner join, inner:TableReader_51, equal:[eq(test.sgc2.a, test.sgc1.a)]
+└─HashRightJoin_32	5.00	root	inner join, inner:TableReader_51, hasher:inner, equal:[eq(test.sgc2.a, test.sgc1.a)]
   ├─TableReader_51	1.00	root	data:Selection_50
   │ └─Selection_50	1.00	cop	not(isnull(test.sgc2.a))
   │   └─TableScan_49	1.00	cop	table:sgc2, range:[-inf,+inf], keep order:false
